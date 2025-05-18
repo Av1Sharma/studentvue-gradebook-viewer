@@ -35,6 +35,53 @@ def fetch_gradebook(report_period: Optional[int] = None) -> dict:
     
     # Fetch gradebook
     gradebook = client.get_gradebook(report_period=report_period)
+    print("Raw gradebook response:", json.dumps(gradebook, indent=2))
+    
+    # Validate and clean the response
+    if not isinstance(gradebook, dict):
+        raise ValueError(f"Invalid gradebook response format: {type(gradebook)}")
+        
+    if 'Gradebook' not in gradebook:
+        raise ValueError("No gradebook data in response")
+        
+    courses = gradebook['Gradebook'].get('Courses', {})
+    print("Courses data:", json.dumps(courses, indent=2))
+    
+    if not isinstance(courses, dict):
+        raise ValueError(f"Invalid courses data format: {type(courses)}")
+        
+    course_list = courses.get('Course', [])
+    print("Course list:", json.dumps(course_list, indent=2))
+    
+    if not isinstance(course_list, list):
+        course_list = [course_list]
+        
+    # Clean and validate each course
+    for course in course_list:
+        if not isinstance(course, dict):
+            print(f"Skipping invalid course: {type(course)}")
+            continue
+            
+        # Ensure Marks is a list
+        marks = course.get('Marks', {})
+        print(f"Course marks before processing: {json.dumps(marks, indent=2)}")
+        
+        if isinstance(marks, dict):
+            mark_list = marks.get('Mark', [])
+            if not isinstance(mark_list, list):
+                mark_list = [mark_list]
+            course['Marks'] = {'Mark': mark_list}
+            
+        # Ensure Assignments is a list
+        assignments = course.get('Assignments', {})
+        print(f"Course assignments before processing: {json.dumps(assignments, indent=2)}")
+        
+        if isinstance(assignments, dict):
+            assignment_list = assignments.get('Assignment', [])
+            if not isinstance(assignment_list, list):
+                assignment_list = [assignment_list]
+            course['Assignments'] = {'Assignment': assignment_list}
+    
     return gradebook
 
 def display_gradebook(gradebook: dict):
@@ -75,17 +122,6 @@ def display_gradebook(gradebook: dict):
             
             print(f"\nMarking Period: {mark_name}")
             print(f"Grade: {calculated_score} ({raw_score}%)")
-            
-            # Only show grade breakdown for current marking period (HS-MK4)
-            if mark_name == 'HS-MK4':
-                grade_calc = mark.get('GradeCalculationSummary', {}).get('AssignmentGradeCalc', [])
-                if not isinstance(grade_calc, list):
-                    grade_calc = [grade_calc]
-                    
-                print("\nGrade Breakdown:")
-                for calc in grade_calc:
-                    if calc.get('@Type') != 'TOTAL':
-                        print(f"- {calc.get('@Type')}: {calc.get('@WeightedPct')} ({calc.get('@CalculatedMark')})")
         
         # Display assignments
         assignments = course.get('Assignments', {}).get('Assignment', [])

@@ -21,116 +21,131 @@ st.markdown("""
     }
     .course-card {
         background-color: #f0f2f6;
-        padding: 1rem;
+        padding: 1.5rem;
         border-radius: 10px;
-        margin-bottom: 1rem;
+        margin-bottom: 1.5rem;
     }
-    .grade-breakdown {
-        background-color: #ffffff;
-        padding: 1rem;
-        border-radius: 5px;
+    .grade-section {
+        margin: 1rem 0;
+    }
+    .assignment-section {
         margin-top: 1rem;
+    }
+    hr {
+        margin: 0.5rem 0;
+        border: none;
+        border-top: 1px solid #e0e0e0;
     }
     </style>
     """, unsafe_allow_html=True)
 
 def main():
     st.title("📚 StudentVue Gradebook Viewer")
-    st.markdown("Enter your StudentVue credentials to view your grades.")
 
-    # Create a form for credentials
-    with st.form("login_form"):
-        username = st.text_input("Username (email)")
-        password = st.text_input("Password", type="password")
-        submit_button = st.form_submit_button("View Grades")
+    try:
+        # Hardcoded credentials for development
+        
+        
+        # Set environment variables for the session
+        os.environ['STUDENTVUE_USERNAME'] = username
+        os.environ['STUDENTVUE_PASSWORD'] = password
+        os.environ['STUDENTVUE_DOMAIN'] = 'va-pwcps-psv.edupoint.com'
 
-    if submit_button:
-        if not username or not password:
-            st.error("Please enter both username and password")
+        # Fetch gradebook
+        with st.spinner('Fetching your grades...'):
+            gradebook = fetch_gradebook()
+
+        if not gradebook or 'Gradebook' not in gradebook:
+            st.error("No gradebook data available. Please check your credentials.")
             return
 
-        try:
-            # Set environment variables for the session
-            os.environ['STUDENTVUE_USERNAME'] = username
-            os.environ['STUDENTVUE_PASSWORD'] = password
-            os.environ['STUDENTVUE_DOMAIN'] = 'va-pwcps-psv.edupoint.com'
+        # Display courses
+        courses_data = gradebook['Gradebook'].get('Courses', {})
+        if not isinstance(courses_data, dict):
+            st.error("Invalid gradebook format")
+            return
+                
+        courses = courses_data.get('Course', [])
+        if not isinstance(courses, list):
+            courses = [courses]
 
-            # Fetch gradebook
-            with st.spinner('Fetching your grades...'):
-                gradebook = fetch_gradebook()
-
-            if not gradebook or 'Gradebook' not in gradebook:
-                st.error("No gradebook data available. Please check your credentials.")
-                return
-
-            # Display courses
-            courses = gradebook['Gradebook'].get('Courses', {}).get('Course', [])
-            if not isinstance(courses, list):
-                courses = [courses]
-
-            for course in courses:
-                with st.container():
-                    st.markdown("---")
-                    col1, col2 = st.columns([2, 1])
+        for course in courses:
+            if not isinstance(course, dict):
+                continue
                     
-                    with col1:
-                        st.subheader(course.get('@Title', 'N/A'))
-                        st.write(f"Teacher: {course.get('@Teacher', 'N/A')}")
-                        st.write(f"Period: {course.get('@Period', 'N/A')}")
-                        st.write(f"Room: {course.get('@Room', 'N/A')}")
-
-                    # Get marks/grades
-                    marks = course.get('Marks', {}).get('Mark', [])
-                    if not isinstance(marks, list):
-                        marks = [marks]
-
-                    with col2:
-                        for mark in marks:
-                            mark_name = mark.get('@MarkName', 'N/A')
-                            if mark_name == 'HS-EX2':
-                                continue
-                                
+            course_title = course.get('@Title', 'N/A')
+            period = course.get('@Period', 'N/A')
+            
+            # Handle period number extraction for both string and integer values
+            if isinstance(period, int):
+                period_num = str(period)
+            else:
+                period_num = ''.join(filter(str.isdigit, str(period)))
+            
+            # Create course card
+            st.markdown(f'<div class="course-card">', unsafe_allow_html=True)
+            
+            # Course header
+            st.subheader(f"{period_num} - {course_title}")
+            
+            # Get marks/grades
+            marks_data = course.get('Marks', {})
+            if isinstance(marks_data, dict):
+                marks = marks_data.get('Mark', [])
+                if not isinstance(marks, list):
+                    marks = [marks]
+                
+                # Filter out semester grades and sort by marking period
+                quarter_marks = []
+                for mark in marks:
+                    if isinstance(mark, dict) and mark.get('@MarkName', '').startswith('HS-MK'):
+                        quarter_marks.append(mark)
+                
+                quarter_marks.sort(key=lambda x: x.get('@MarkName', ''))
+                
+                if quarter_marks:
+                    # Display grades in columns
+                    st.markdown('<div class="grade-section">', unsafe_allow_html=True)
+                    grade_cols = st.columns(len(quarter_marks))
+                    for idx, mark in enumerate(quarter_marks):
+                        with grade_cols[idx]:
                             calculated_score = mark.get('@CalculatedScoreString', 'N/A')
                             raw_score = mark.get('@CalculatedScoreRaw', 'N/A')
+                            mark_name = mark.get('@MarkName', '')
+                            quarter_num = mark_name[-1] if mark_name else str(idx + 1)
                             
                             st.metric(
-                                label=f"{mark_name} Grade",
+                                label=f"Q{quarter_num}",
                                 value=f"{calculated_score}",
                                 delta=f"{raw_score}%"
                             )
+                    st.markdown('</div>', unsafe_allow_html=True)
 
-                    # Show grade breakdown only for current marking period
-                    for mark in marks:
-                        if mark.get('@MarkName') == 'HS-MK4':
-                            grade_calc = mark.get('GradeCalculationSummary', {}).get('AssignmentGradeCalc', [])
-                            if not isinstance(grade_calc, list):
-                                grade_calc = [grade_calc]
+            # Display assignments
+            assignments_data = course.get('Assignments', {})
+            if isinstance(assignments_data, dict):
+                assignments = assignments_data.get('Assignment', [])
+                if not isinstance(assignments, list):
+                    assignments = [assignments]
 
-                            st.markdown("### Grade Breakdown")
-                            for calc in grade_calc:
-                                if calc.get('@Type') != 'TOTAL':
-                                    st.progress(
-                                        float(calc.get('@WeightedPct', '0').strip('%')) / 100,
-                                        text=f"{calc.get('@Type')}: {calc.get('@WeightedPct')} ({calc.get('@CalculatedMark')})"
-                                    )
+                if assignments:
+                    st.markdown('<div class="assignment-section">', unsafe_allow_html=True)
+                    st.markdown("### Assignments")
+                    for assignment in assignments:
+                        if isinstance(assignment, dict):
+                            st.markdown('<hr>', unsafe_allow_html=True)
+                            st.write(f"**{assignment.get('@Measure', 'N/A')}** - {assignment.get('@Type', 'N/A')}")
+                            st.write(f"Date: {assignment.get('@Date', 'N/A')}")
+                            st.write(f"Due Date: {assignment.get('@DueDate', 'N/A')}")
+                            st.write(f"Score: {assignment.get('@DisplayScore', 'N/A')}")
+                            if assignment.get('@Notes'):
+                                st.write(f"Notes: {assignment.get('@Notes')}")
+                    st.markdown('</div>', unsafe_allow_html=True)
+            
+            st.markdown('</div>', unsafe_allow_html=True)
 
-                    # Display recent assignments
-                    assignments = course.get('Assignments', {}).get('Assignment', [])
-                    if not isinstance(assignments, list):
-                        assignments = [assignments]
-
-                    if assignments:
-                        st.markdown("### Recent Assignments")
-                        for assignment in assignments:
-                            with st.expander(f"{assignment.get('@Measure', 'N/A')} - {assignment.get('@Type', 'N/A')}"):
-                                st.write(f"Date: {assignment.get('@Date', 'N/A')}")
-                                st.write(f"Due Date: {assignment.get('@DueDate', 'N/A')}")
-                                st.write(f"Score: {assignment.get('@DisplayScore', 'N/A')}")
-                                if assignment.get('@Notes'):
-                                    st.write(f"Notes: {assignment.get('@Notes')}")
-
-        except Exception as e:
-            st.error(f"Error fetching gradebook: {str(e)}")
+    except Exception as e:
+        st.error("Error fetching gradebook. Please try again later.")
 
 if __name__ == "__main__":
     main() 
